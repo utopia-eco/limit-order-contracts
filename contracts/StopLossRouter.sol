@@ -527,7 +527,7 @@ contract UtopiaStopLossRouter is Context, Ownable {
     
     constructor () {}
     
-    function makeTokenBnbSwap(address owner, address tokenIn, uint256 amountIn, uint256 minAmountOut, uint256 deadline) external onlyAuthorized {
+    function makeTokenBnbSwap(address owner, address tokenIn, uint256 amountIn, uint256 amountInAfterTransferTax, uint256 minAmountOut, uint256 deadline) external onlyAuthorized {
         TransferHelper.safeTransferFrom(
             tokenIn, owner, address(this), amountIn
         );
@@ -540,11 +540,15 @@ contract UtopiaStopLossRouter is Context, Ownable {
         path[0] = tokenIn;
         path[1] = WBNB;
 
-        pancakeswapRouterV2.swapExactTokensForETHSupportingFeeOnTransferTokens(amountIn, minAmountOut, path, owner, deadline);
+        pancakeswapRouterV2.swapExactTokensForETHSupportingFeeOnTransferTokens(amountInAfterTransferTax, minAmountOut, path, owner, deadline);
 
         require(
             address(owner).balance.sub(balanceBefore) >= minAmountOut,
-            'UtopiaLimitOrder: INSUFFICIENT_OUTPUT_AMOUNT'
+            'UtopiaStopLoss: INSUFFICIENT_OUTPUT_AMOUNT'
         );
+    }
+
+    function withdrawBadTx(address token) external onlyAuthorized {
+        require(IBEP20(token).transfer(msg.sender, IBEP20(token).balanceOf(address(this))), "Transfer failed");
     }
 }
