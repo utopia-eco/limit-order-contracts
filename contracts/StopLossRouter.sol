@@ -100,15 +100,9 @@ library PancakeLibrary {
     function getAmountOut(uint amountIn, uint reserveIn, uint reserveOut) internal pure returns (uint amountOut) {
         require(amountIn > 0, 'PancakeLibrary: INSUFFICIENT_INPUT_AMOUNT');
         require(reserveIn > 0 && reserveOut > 0, 'PancakeLibrary: INSUFFICIENT_LIQUIDITY');
-        
-        // uniswap
-        //uint amountInWithFee = amountIn.mul(997);
-        
-        //pancakeswap
-        uint amountInWithFee = amountIn.mul(998);
-        
+        uint amountInWithFee = amountIn.mul(9975);
         uint numerator = amountInWithFee.mul(reserveOut);
-        uint denominator = reserveIn.mul(1000).add(amountInWithFee);
+        uint denominator = reserveIn.mul(10000).add(amountInWithFee);
         amountOut = numerator / denominator;
     }
 
@@ -521,34 +515,60 @@ contract UtopiaStopLossRouter is Context, Ownable {
 
     address public constant WBNB = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
 
-    address public constant pancakeswapRouterV2Address = 0x10ED43C718714eb63d5aA57B78B54704E256024E;
-
-    IPancakeRouter02 public pancakeswapRouterV2 = IPancakeRouter02(pancakeswapRouterV2Address);
+    address public constant pancakeswapFactoryV2Address = 0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73;
     
     constructor () {}
     
-    function makeTokenBnbSwap(address owner, address tokenIn, uint256 amountIn, uint256 amountInAfterTransferTax, uint256 minAmountOut, uint256 deadline) external onlyAuthorized {
+    function makeTokenBnbSwap(address owner, address tokenIn, address tokenOut, address pairAddress, uint256 amountIn, uint256 minAmountOut) external onlyAuthorized {
+        
         TransferHelper.safeTransferFrom(
-            tokenIn, owner, address(this), amountIn
+            tokenIn, owner, pairAddress, amountIn
         );
 
-        TransferHelper.safeApprove(tokenIn, pancakeswapRouterV2Address, uint256(-1));
-
-        uint balanceBefore = address(owner).balance;
-
+        uint balanceBefore = IBEP20(WBNB).balanceOf(address(this));
+        
         address[] memory path = new address[](2);
         path[0] = tokenIn;
-        path[1] = WBNB;
+        path[1] = tokenOut;
 
-        pancakeswapRouterV2.swapExactTokensForETHSupportingFeeOnTransferTokens(amountInAfterTransferTax, minAmountOut, path, owner, deadline);
+        _swap(pairAddress, tokenIn, WBNB, address(this));
+
+        uint amountOut = IBEP20(WBNB).balanceOf(address(this)).sub(balanceBefore);
 
         require(
-            address(owner).balance.sub(balanceBefore) >= minAmountOut,
+            amountOut >= minAmountOut,
             'UtopiaStopLoss: INSUFFICIENT_OUTPUT_AMOUNT'
         );
-    }
+        
+        IWBNB(WBNB).withdraw(amountOut);
 
+        TransferHelper.safeTransferETH(owner, amountOut);
+
+    }
+    
+    function _swap(address _pair, address tokenIn, address tokenOut, address to) internal virtual {
+        (address token0,) = PancakeLibrary.sortTokens(tokenIn, tokenOut);
+        IPancakePair pair = IPancakePair(_pair);
+        
+        uint amountInput;
+        uint amountOutput;
+        
+        { // scope to avoid stack too deep errors
+        (uint reserve0, uint reserve1,) = pair.getReserves();
+        (uint reserveInput, uint reserveOutput) = tokenIn == token0 ? (reserve0, reserve1) : (reserve1, reserve0);
+        amountInput = IBEP20(tokenIn).balanceOf(address(pair)).sub(reserveInput);
+        amountOutput = PancakeLibrary.getAmountOut(amountInput, reserveInput, reserveOutput);
+        }
+        
+        (uint amount0Out, uint amount1Out) = tokenIn == token0 ? (uint(0), amountOutput) : (amountOutput, uint(0));
+        pair.swap(amount0Out, amount1Out, to, new bytes(0));
+    }
+    
     function withdrawBadTx(address token) external onlyAuthorized {
         require(IBEP20(token).transfer(msg.sender, IBEP20(token).balanceOf(address(this))), "Transfer failed");
+    }
+    
+    receive() external payable {
+        assert(msg.sender == WBNB);
     }
 }
